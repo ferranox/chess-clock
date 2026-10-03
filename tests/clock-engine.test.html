@@ -1,0 +1,350 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Tempo — Clock Engine Tests</title>
+  <style>
+    :root { color-scheme: dark; }
+    body { font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace; background: #12141a; color: #eaeaea; margin: 0; padding: 20px; }
+    h1 { font-size: 1.3rem; }
+    #summary { position: sticky; top: 0; background: #12141a; padding: 12px 0; border-bottom: 1px solid #2c3140; font-size: 1.05rem; }
+    .pass { color: #5fd39a; }
+    .fail { color: #ff6b57; }
+    ul { list-style: none; padding: 0; }
+    li { padding: 6px 10px; border-bottom: 1px solid #1e222c; font-size: 0.85rem; }
+    li.fail { background: rgba(255,107,87,0.08); }
+    .detail { color: #a8adba; display: block; margin-top: 2px; }
+    .count { font-weight: 700; }
+  </style>
+</head>
+<body>
+  <h1>Tempo — Clock Engine Test Suite</h1>
+  <div id="summary">Running…</div>
+  <ul id="results"></ul>
+
+  <!-- Boot the engine module only (no DOM app). -->
+  <script>window.TEMPO_TEST_MODE = true;</script>
+  <script src="../app.js"></script>
+  <script>
+  (function () {
+    'use strict';
+    const T = window.Tempo;
+    const results = [];
+    let passed = 0, failed = 0;
+
+    function test(name, fn) {
+      try {
+        fn();
+        passed++;
+        results.push({ name, ok: true });
+      } catch (e) {
+        failed++;
+        results.push({ name, ok: false, msg: e && e.message ? e.message : String(e) });
+      }
+    }
+    function assert(cond, msg) { if (!cond) throw new Error(msg || 'assertion failed'); }
+    function eq(a, b, msg) { if (a !== b) throw new Error((msg || 'not equal') + ' — got ' + JSON.stringify(a) + ', expected ' + JSON.stringify(b)); }
+    function near(a, b, tol, msg) { if (Math.abs(a - b) > (tol == null ? 1 : tol)) throw new Error((msg || 'not near') + ' — got ' + a + ', expected ~' + b + ' (±' + tol + ')'); }
+
+    // ------- Fake clock -------
+    function makeClock() {
+      let t = 0;
+      return { now: () => t, advance: (ms) => { t += ms; }, set: (v) => { t = v; }, get: () => t };
+    }
+    const MIN = 60 * 1000;
+    function symTC(baseMs, incMs, type) {
+      return T.TimeControl.symmetric(baseMs, incMs, type || (incMs ? T.IncrementType.FISCHER : T.IncrementType.NONE));
+    }
+    function newEngine(baseMs, incMs, type) {
+      const clk = makeClock();
+      const eng = new T.ClockEngine({ now: clk.now, timeControl: symTC(baseMs, incMs, type) });
+      return { eng, clk };
+    }
+
+    /* ============ FORMATTING ============ */
+    test('1. formatTime: >= 60s renders MM:SS', () => {
+      eq(T.formatTime(90000, 'adaptive'), '1:30');
+      eq(T.formatTime(600000, 'adaptive'), '10:00');
+    });
+    test('2. formatTime: 10–60s renders SS.S (one decimal, floored)', () => {
+      eq(T.formatTime(59900, 'adaptive'), '59.9');
+      eq(T.formatTime(12345, 'adaptive'), '12.3');
+    });
+    test('3. formatTime: < 10s renders SS.SS (two decimals, floored)', () => {
+      eq(T.formatTime(9990, 'adaptive'), '9.99');
+      eq(T.formatTime(1234, 'adaptive'), '1.23');
+    });
+    test('4. formatTime: hours render H:MM:SS', () => {
+      eq(T.formatTime(3661000, 'adaptive'), '1:01:01');
+    });
+    test('5. formatTime: negative clamps to zero', () => {
+      eq(T.formatTime(-5000, 'adaptive'), '0.00');
+    });
+    test('6. formatTime: mmss mode always MM:SS', () => {
+      eq(T.formatTime(5000, 'mmss'), '0:05');
+    });
+
+    /* ============ MODEL ============ */
+    test('7. TimeControl.symmetric builds equal players', () => {
+      const tc = symTC(3 * MIN, 2000);
+      eq(tc.p1.baseMs, 180000); eq(tc.p2.baseMs, 180000);
+      eq(tc.p1.incMs, 2000); eq(tc.type, T.IncrementType.FISCHER);
+    });
+    test('8. Engine starts IDLE with full clocks', () => {
+      const { eng } = newEngine(10 * MIN, 0);
+      eq(eng.state, T.GameState.IDLE);
+      eq(eng.getRemaining(0), 600000);
+      eq(eng.getRemaining(1), 600000);
+      eq(eng.active, null);
+    });
+    test('9. Asymmetric time control per player', () => {
+      const clk = makeClock();
+      const tc = new T.TimeControl({
+        type: T.IncrementType.FISCHER,
+        p1: { baseMs: 5 * MIN, incMs: 3000 },
+        p2: { baseMs: 3 * MIN, incMs: 0 },
+      });
+      const eng = new T.ClockEngine({ now: clk.now, timeControl: tc });
+      eq(eng.getRemaining(0), 300000);
+      eq(eng.getRemaining(1), 180000);
+      eq(eng.players[0].incrementMs, 3000);
+      eq(eng.players[1].incrementMs, 0);
+    });
+
+    /* ============ RUNNING / TIMING ============ */
+    test('10. start() sets RUNNING and active player', () => {
+      const { eng } = newEngine(10 * MIN, 0);
+      eq(eng.start(0), true);
+      eq(eng.state, T.GameState.RUNNING);
+      eq(eng.active, 0);
+    });
+    test('11. Active clock counts down; inactive unchanged', () => {
+      const { eng, clk } = newEngine(10 * MIN, 0);
+      eng.start(0);
+      clk.advance(4321);
+      eq(eng.getRemaining(0), 600000 - 4321);
+      eq(eng.getRemaining(1), 600000);
+    });
+    test('12. TIMING ACCURACY: 10:00 + 5s Fischer, ~2.5s move -> 10:02.5', () => {
+      const { eng, clk } = newEngine(10 * MIN, 5000, T.IncrementType.FISCHER);
+      eng.start(0);
+      clk.advance(2500);        // player thinks 2.5s
+      eng.press(0);             // presses clock -> commit + increment + switch
+      eq(eng.players[0].remainingMs, 602500); // 600000 - 2500 + 5000
+      eq(T.formatTime(eng.players[0].remainingMs, 'adaptive'), '10:02');
+      eq(eng.active, 1);
+    });
+    test('13. No-increment control adds nothing on press', () => {
+      const { eng, clk } = newEngine(5 * MIN, 0, T.IncrementType.NONE);
+      eng.start(0);
+      clk.advance(3000);
+      eng.press(0);
+      eq(eng.players[0].remainingMs, 300000 - 3000);
+    });
+    test('14. press commits elapsed and switches active', () => {
+      const { eng, clk } = newEngine(3 * MIN, 0);
+      eng.start(0);
+      clk.advance(1000);
+      eng.press(0);
+      eq(eng.active, 1);
+      clk.advance(2000);
+      eq(eng.getRemaining(1), 180000 - 2000);
+      eq(eng.getRemaining(0), 180000 - 1000); // frozen
+    });
+    test('15. Non-active press is ignored', () => {
+      const { eng, clk } = newEngine(3 * MIN, 0);
+      eng.start(0);
+      clk.advance(1000);
+      eq(eng.press(1), false);
+      eq(eng.active, 0);
+    });
+    test('16. Fischer increment accumulates over multiple moves', () => {
+      const { eng, clk } = newEngine(2 * MIN, 2000, T.IncrementType.FISCHER);
+      eng.start(0);
+      clk.advance(1000); eng.press(0); // p0: 120000-1000+2000 = 121000
+      clk.advance(1000); eng.press(1); // p1: 120000-1000+2000 = 121000
+      clk.advance(500);  eng.press(0); // p0: 121000-500+2000 = 122500
+      eq(eng.players[0].remainingMs, 122500);
+      eq(eng.players[1].remainingMs, 121000);
+      eq(eng.players[0].moves, 2);
+      eq(eng.players[1].moves, 1);
+    });
+
+    /* ============ DRIFT RESISTANCE ============ */
+    test('17. DRIFT: irregular update intervals give exact remaining', () => {
+      const { eng, clk } = newEngine(10 * MIN, 0);
+      eng.start(0);
+      const steps = [16, 28, 11, 43, 100, 17];
+      let total = 0;
+      steps.forEach((s) => { clk.advance(s); eng.checkFlag(); total += s; });
+      // remaining computed from single timestamp diff -> no accumulation drift
+      eq(eng.getRemaining(0), 600000 - total);
+      eq(total, 215);
+    });
+    test('18. DRIFT: many small frames equal one big jump', () => {
+      const a = newEngine(10 * MIN, 0); a.eng.start(0);
+      for (let i = 0; i < 1000; i++) { a.clk.advance(17); a.eng.checkFlag(); }
+      const b = newEngine(10 * MIN, 0); b.eng.start(0);
+      b.clk.advance(17000);
+      eq(a.eng.getRemaining(0), b.eng.getRemaining(0));
+    });
+
+    /* ============ PAUSE / RESUME ============ */
+    test('19. pause() freezes the active clock', () => {
+      const { eng, clk } = newEngine(5 * MIN, 0);
+      eng.start(0);
+      clk.advance(2000);
+      eng.pause();
+      const snap = eng.getRemaining(0);
+      clk.advance(9999);
+      eq(eng.getRemaining(0), snap); // no change while paused
+      eq(eng.state, T.GameState.PAUSED);
+    });
+    test('20. resume() continues counting', () => {
+      const { eng, clk } = newEngine(5 * MIN, 0);
+      eng.start(0);
+      clk.advance(2000); eng.pause();
+      clk.advance(5000); // paused gap ignored
+      eng.resume();
+      clk.advance(1000);
+      eq(eng.getRemaining(0), 300000 - 2000 - 1000);
+    });
+
+    /* ============ UNDO ============ */
+    test('21. undo() restores previous player and time', () => {
+      const { eng, clk } = newEngine(10 * MIN, 0);
+      eng.start(0);
+      clk.advance(3000);
+      eng.press(0); // p0 -> 597000, active 1
+      eq(eng.active, 1);
+      eng.undo();
+      eq(eng.active, 0);
+      eq(eng.players[0].remainingMs, 597000);
+    });
+    test('22. undo() refunds opponent time spent after the switch', () => {
+      const { eng, clk } = newEngine(10 * MIN, 0);
+      eng.start(0);
+      clk.advance(3000); eng.press(0); // active 1, p1 stored 600000
+      clk.advance(2000);               // p1 uses 2s (not committed)
+      eng.undo();                      // back to p0
+      eq(eng.getRemaining(1), 600000); // p1 fully refunded
+      eq(eng.getRemaining(0), 597000); // p0 unchanged at undo instant
+    });
+    test('23. undo() reverses the Fischer increment', () => {
+      const { eng, clk } = newEngine(10 * MIN, 5000, T.IncrementType.FISCHER);
+      eng.start(0);
+      clk.advance(2000); eng.press(0); // p0 = 600000-2000+5000 = 603000
+      eng.undo();
+      eq(eng.players[0].remainingMs, 598000); // increment removed, only move time charged
+    });
+    test('24. undo stack respects maxUndo cap', () => {
+      const clk = makeClock();
+      const eng = new T.ClockEngine({ now: clk.now, timeControl: symTC(10 * MIN, 0), maxUndo: 3 });
+      eng.start(0);
+      for (let i = 0; i < 6; i++) { clk.advance(100); eng.press(eng.active); }
+      eq(eng.undoStack.length, 3);
+    });
+
+    /* ============ TIMEOUT ============ */
+    test('25. checkFlag() detects flag-fall (timeout)', () => {
+      const { eng, clk } = newEngine(1000, 0); // 1 second
+      eng.start(0);
+      clk.advance(1500);
+      const flagged = eng.checkFlag();
+      eq(flagged, true);
+      eq(eng.state, T.GameState.TIMEOUT);
+      eq(eng.loser, 0);
+      eq(eng.winner, 1);
+      eq(eng.getRemaining(0), 0);
+    });
+    test('26. press with overlong move flags the mover', () => {
+      const { eng, clk } = newEngine(2000, 0);
+      eng.start(0);
+      clk.advance(2500);
+      eng.press(0);
+      eq(eng.state, T.GameState.TIMEOUT);
+      eq(eng.loser, 0);
+    });
+    test('27. timeout callback fires with (loser, winner)', () => {
+      const clk = makeClock();
+      let cb = null;
+      const eng = new T.ClockEngine({
+        now: clk.now, timeControl: symTC(1000, 0),
+        onTimeout: (l, w) => { cb = { l, w }; },
+      });
+      eng.start(1);
+      clk.advance(1200);
+      eng.checkFlag();
+      eq(cb.l, 1); eq(cb.w, 0);
+    });
+    test('28. undo() can recover from a timeout', () => {
+      const { eng, clk } = newEngine(2000, 0);
+      eng.start(0);
+      clk.advance(1000); eng.press(0); // active 1 (snapshot: p0=1000)
+      clk.advance(2500);               // p1 will flag
+      eng.checkFlag();
+      eq(eng.state, T.GameState.TIMEOUT);
+      eng.undo();
+      eq(eng.state, T.GameState.RUNNING);
+      assert(eng.loser === null, 'loser cleared after undo');
+    });
+
+    /* ============ RESET / STATE ============ */
+    test('29. reset() returns engine to IDLE with full clocks', () => {
+      const { eng, clk } = newEngine(5 * MIN, 0);
+      eng.start(0); clk.advance(10000); eng.press(0);
+      eng.reset();
+      eq(eng.state, T.GameState.IDLE);
+      eq(eng.getRemaining(0), 300000);
+      eq(eng.getRemaining(1), 300000);
+      eq(eng.active, null);
+      eq(eng.canUndo(), false);
+    });
+    test('30. moves counter tracks presses per player', () => {
+      const { eng, clk } = newEngine(5 * MIN, 0);
+      eng.start(0);
+      clk.advance(100); eng.press(0);
+      clk.advance(100); eng.press(1);
+      clk.advance(100); eng.press(0);
+      eq(eng.players[0].moves, 2);
+      eq(eng.players[1].moves, 1);
+    });
+    test('31. integer-ms stored remaining (no float creep)', () => {
+      const { eng, clk } = newEngine(5 * MIN, 0);
+      eng.start(0);
+      clk.advance(33.7); eng.press(0);
+      assert(Number.isInteger(eng.players[0].remainingMs), 'remaining should be integer ms');
+    });
+    test('32. simulated real move sequence (Blitz 3+2)', () => {
+      const { eng, clk } = newEngine(3 * MIN, 2000, T.IncrementType.FISCHER);
+      eng.start(0);
+      const moves = [ [0, 4000], [1, 6000], [0, 3000], [1, 5000] ];
+      moves.forEach(([who, ms]) => { clk.advance(ms); eng.press(who); });
+      // p0: 180000 -4000 +2000 -3000 +2000 = 177000
+      // p1: 180000 -6000 +2000 -5000 +2000 = 173000
+      eq(eng.players[0].remainingMs, 177000);
+      eq(eng.players[1].remainingMs, 173000);
+    });
+
+    /* ------- Render summary ------- */
+    const ul = document.getElementById('results');
+    results.forEach((r) => {
+      const li = document.createElement('li');
+      li.className = r.ok ? 'pass' : 'fail';
+      li.textContent = (r.ok ? '✓ ' : '✗ ') + r.name;
+      if (!r.ok) { const s = document.createElement('span'); s.className = 'detail'; s.textContent = r.msg; li.appendChild(s); }
+      ul.appendChild(li);
+    });
+    const total = passed + failed;
+    const sum = document.getElementById('summary');
+    sum.innerHTML = '<span class="count ' + (failed ? 'fail' : 'pass') + '">' +
+      passed + ' / ' + total + ' passed</span>' +
+      (failed ? ' — <span class="fail">' + failed + ' failed</span>' : ' — all green ✓');
+    // expose for headless runners
+    window.__TEMPO_TEST_RESULT__ = { passed, failed, total };
+    document.title = (failed ? '✗ ' : '✓ ') + passed + '/' + total + ' — Tempo tests';
+  })();
+  </script>
+</body>
+</html>

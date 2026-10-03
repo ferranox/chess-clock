@@ -1,0 +1,179 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="system">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover, maximum-scale=1.0, user-scalable=no" />
+  <title>Tempo — Chess Clock</title>
+  <meta name="description" content="Tempo is a fast, drift-resistant, offline-first chess clock. Bullet, blitz, rapid and custom time controls with Fischer increment, sound, haptics and themes." />
+  <meta name="author" content="Tempo" />
+  <link rel="canonical" href="https://chess.ferranox.xyz/" />
+
+  <!-- Theme color -->
+  <meta name="theme-color" content="#12141a" media="(prefers-color-scheme: dark)" />
+  <meta name="theme-color" content="#f4f1ea" media="(prefers-color-scheme: light)" />
+  <meta name="color-scheme" content="light dark" />
+
+  <!-- PWA / Apple -->
+  <link rel="manifest" href="manifest.webmanifest" />
+  <meta name="mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+  <meta name="apple-mobile-web-app-title" content="Tempo" />
+  <meta name="application-name" content="Tempo" />
+  <link rel="apple-touch-icon" href="icons/apple-touch-icon.png" />
+
+  <!-- Favicons -->
+  <link rel="icon" href="favicon.ico" sizes="any" />
+  <link rel="icon" type="image/png" sizes="16x16" href="favicon-16.png" />
+  <link rel="icon" type="image/png" sizes="32x32" href="favicon-32.png" />
+
+  <!-- Open Graph -->
+  <meta property="og:type" content="website" />
+  <meta property="og:site_name" content="Tempo" />
+  <meta property="og:title" content="Tempo — Chess Clock" />
+  <meta property="og:description" content="A fast, drift-resistant, offline-first chess clock PWA." />
+  <meta property="og:url" content="https://i.ytimg.com/vi/5UQLJPmLGbA/maxresdefault.jpg" />
+  <meta property="og:image" content="https://i.ytimg.com/vi/EK2w6qA5zz8/maxresdefault.jpg" />
+
+  <!-- Twitter -->
+  <meta name="twitter:card" content="summary" />
+  <meta name="twitter:title" content="Tempo — Chess Clock" />
+  <meta name="twitter:description" content="A fast, drift-resistant, offline-first chess clock PWA." />
+  <meta name="twitter:image" content="https://i.ytimg.com/vi/uD4ccJuvXc8/maxresdefault.jpg" />
+
+  <link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+  <a class="skip-link" href="#main">Skip to content</a>
+
+  <!-- ============ HOME / SETUP ============ -->
+  <section id="screen-home" class="screen is-active" aria-label="Home and setup">
+    <header class="app-header">
+      <h1 class="brand"><span class="brand-mark" aria-hidden="true">⏱</span> Tempo</h1>
+      <p class="tagline">Chess Clock</p>
+    </header>
+
+    <main id="main" class="home-body">
+      <section class="card" aria-labelledby="preset-heading">
+        <h2 id="preset-heading">Time control</h2>
+        <div class="preset-groups" id="preset-groups" role="group" aria-label="Time control presets">
+          <!-- populated by JS -->
+        </div>
+        <p class="selected-line">Selected: <strong id="selected-preset-name">—</strong></p>
+      </section>
+
+      <div class="home-actions">
+        <button id="btn-start" class="btn btn-primary btn-lg" type="button">Start game</button>
+        <div class="home-nav">
+          <button id="nav-presets" class="btn btn-ghost" type="button">Presets</button>
+          <button id="nav-settings" class="btn btn-ghost" type="button">Settings</button>
+          <button id="nav-history" class="btn btn-ghost" type="button">History</button>
+        </div>
+        <button id="btn-install" class="btn btn-ghost install-hidden" type="button">Install app</button>
+      </div>
+    </main>
+    <footer class="app-footer">
+      <span id="offline-badge" class="badge" hidden>Offline ready</span>
+      <span class="version" id="app-version">Tempo</span>
+    </footer>
+  </section>
+
+  <!-- ============ CLOCK ============ -->
+  <section id="screen-clock" class="screen clock-screen" aria-label="Game clock" hidden>
+    <button id="player-2" class="player player-top" type="button" aria-label="Player 2 clock. Tap to pass turn.">
+      <span class="player-name" id="p2-name">Player 2</span>
+      <span class="player-time" id="p2-time" role="timer" aria-live="off">10:00</span>
+      <span class="player-meta">
+        <span class="player-moves" id="p2-moves">0 moves</span>
+        <span class="player-inc" id="p2-inc"></span>
+      </span>
+    </button>
+
+    <div class="clock-bar" role="toolbar" aria-label="Clock controls">
+      <button id="btn-pause" class="ctrl" type="button" aria-label="Pause">⏸</button>
+      <button id="btn-undo" class="ctrl" type="button" aria-label="Undo last move" disabled>↶</button>
+      <button id="btn-clock-home" class="ctrl" type="button" aria-label="Exit to home">✕</button>
+      <button id="btn-reset" class="ctrl" type="button" aria-label="Reset clock">⟳</button>
+      <span class="clock-state" id="clock-state" aria-live="polite">Ready</span>
+    </div>
+
+    <button id="player-1" class="player player-bottom" type="button" aria-label="Player 1 clock. Tap to pass turn.">
+      <span class="player-name" id="p1-name">Player 1</span>
+      <span class="player-time" id="p1-time" role="timer" aria-live="off">10:00</span>
+      <span class="player-meta">
+        <span class="player-moves" id="p1-moves">0 moves</span>
+        <span class="player-inc" id="p1-inc"></span>
+      </span>
+    </button>
+
+    <div id="start-overlay" class="overlay">
+      <div class="overlay-card">
+        <h2 id="overlay-title">Ready to play</h2>
+        <p id="overlay-sub">Tap either side to start. The tapped player's clock starts their opponent.</p>
+        <p class="overlay-tc" id="overlay-tc"></p>
+        <button id="overlay-dismiss" class="btn btn-primary" type="button">Got it</button>
+      </div>
+    </div>
+  </section>
+
+  <!-- ============ SETTINGS ============ -->
+  <section id="screen-settings" class="screen sub-screen" aria-label="Settings" hidden>
+    <header class="sub-header">
+      <button class="back-btn" data-back type="button" aria-label="Back">‹ Back</button>
+      <h2>Settings</h2>
+    </header>
+    <div class="sub-body" id="settings-body">
+      <!-- populated by JS -->
+    </div>
+  </section>
+
+  <!-- ============ PRESETS ============ -->
+  <section id="screen-presets" class="screen sub-screen" aria-label="Presets" hidden>
+    <header class="sub-header">
+      <button class="back-btn" data-back type="button" aria-label="Back">‹ Back</button>
+      <h2>Presets</h2>
+      <button id="btn-new-preset" class="btn btn-primary btn-sm" type="button">+ New</button>
+    </header>
+    <div class="sub-body" id="presets-body"></div>
+  </section>
+
+  <!-- ============ HISTORY ============ -->
+  <section id="screen-history" class="screen sub-screen" aria-label="Game history" hidden>
+    <header class="sub-header">
+      <button class="back-btn" data-back type="button" aria-label="Back">‹ Back</button>
+      <h2>History</h2>
+      <button id="btn-clear-history" class="btn btn-ghost btn-sm" type="button">Clear</button>
+    </header>
+    <div class="sub-body" id="history-body"></div>
+  </section>
+
+  <!-- ============ MODAL (custom preset editor) ============ -->
+  <div id="modal-root" class="modal-root" hidden>
+    <div class="modal" role="dialog" aria-modal="true" aria-labelledby="modal-title">
+      <h2 id="modal-title">Custom time control</h2>
+      <div class="modal-body" id="modal-body"></div>
+      <div class="modal-actions">
+        <button id="modal-cancel" class="btn btn-ghost" type="button">Cancel</button>
+        <button id="modal-save" class="btn btn-primary" type="button">Save</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Result dialog -->
+  <div id="result-root" class="modal-root" hidden>
+    <div class="modal" role="dialog" aria-modal="true" aria-labelledby="result-title">
+      <h2 id="result-title">Game over</h2>
+      <p id="result-text"></p>
+      <div class="result-buttons" id="result-buttons"></div>
+      <div class="modal-actions">
+        <button id="result-rematch" class="btn btn-primary" type="button">Rematch</button>
+        <button id="result-home" class="btn btn-ghost" type="button">Home</button>
+      </div>
+    </div>
+  </div>
+
+  <div id="toast" class="toast" role="status" aria-live="polite" hidden></div>
+
+  <script src="app.js" defer></script>
+</body>
+</html>
